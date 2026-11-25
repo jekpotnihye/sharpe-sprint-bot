@@ -1,24 +1,29 @@
 // Pump.fun Sharpe Sprint — cleanest paper bot.
-// Paper money only: this bot trades on the house replay harness, never real funds.
 //
-// Idea, from the dev replay: brand-new pump.fun coins that attract several
-// distinct buyers within their first few trades, and whose price has already
-// lifted a little off its first print, tend to drift up a bit more before
-// fading. The bot snipes only those, one small round trip per mint, with a
-// take-profit, a tight stop and a short maximum hold, so equity moves in
-// many small steps instead of a few wild swings. Everything is deterministic:
-// no clock, no randomness, no environment reads; the only state is the event
-// stream itself.
+// Paper money only. This program trades on the house replay harness and
+// never touches real funds.
 //
-// Guardrails, documented here so the whole policy is auditable in one
-// place (the harness also enforces them): at most 5 open positions at
-// once; a round trip counts only at >= 0.01 SOL per mint; at least 20
-// distinct mints must be round-tripped; maximum drawdown <= 50%; no
-// shorts, no leverage. Exits are governed solely by EXIT_POLICY below:
-// take-profit +10%, stop-loss -5%, and a 60-trade maximum hold. Those
-// three values are the measured v1 values — do not retune them without
-// re-grading, because earlier polishes showed quicker exits worsen
-// hourly Sharpe on the dev window (see BUILD.md).
+// The idea, measured on the dev replay: a brand-new pump.fun coin that
+// draws several distinct buyers inside its first few trades, and whose
+// price has already lifted a little above its first print, tends to drift
+// a bit further up before fading. So the bot snipes only those coins —
+// one small round trip per mint — and exits on a take-profit, a tight
+// stop, or a short maximum hold, so equity moves in many small steps
+// rather than a few wild swings.
+//
+// Everything here is deterministic: no clock, no randomness, no reads
+// from the environment. The only state is the event stream itself.
+//
+// Guardrails, stated here so the whole policy can be audited in one
+// place (the harness enforces them too): at most 5 open positions at a
+// time; a round trip counts only at 0.01 SOL or more per mint; at least
+// 20 distinct mints must be round-tripped; maximum drawdown at most 50%.
+// No shorts, no leverage. All exits are governed solely by EXIT_POLICY
+// below: take-profit +10%, stop-loss -5%, maximum hold 60 trades. Those
+// three numbers are the measured v1 values — changing them without
+// re-grading is not safe, because earlier polish variants showed that
+// quicker exits made hourly Sharpe worse on the dev window (see
+// BUILD.md for the measured variants).
 
 import {
   runBot,
@@ -29,25 +34,27 @@ import {
 
 const LAMPORTS_PER_SOL = 1_000_000_000n;
 
-// Entry: at least this many distinct buyers in the mint's first trades.
+// Entry filter: a mint needs at least this many distinct buyers among
+// its first trades before it can qualify for a snipe.
 const MIN_BUYERS = 4;
-// Entry: only within the first this many trades of a mint's life.
+// Entry filter: only mints still inside their first few trades qualify.
 const MAX_ENTRY_TRADES = 10;
-// Entry: price must be at least this far above its first observed print.
+// Entry filter: the price must sit at least this far (in basis points)
+// above the mint's first observed print.
 const ENTRY_LIFT_BPS = 500;
-// (Polish 3's +20% chase cap was tried and dropped: it cut round trips
-// from 464 to 152 and made hourly Sharpe worse. Polish 5 keeps it out.)
-// Position size: at most this much SOL per mint, and at most 90% of the
-// harness buy cap (1% of the mint's real SOL reserve) for safety.
+// Position sizing: at most this much SOL per mint, and at most 90% of
+// the harness buy cap (1% of the mint's real SOL reserve), for safety.
+// (A +20% chase cap was tried in an earlier polish and dropped: it cut
+// round trips from 464 to 152 and made hourly Sharpe worse.)
 const MAX_SIZE_LAMPORTS = 300_000_000n;
 // A round trip must be at least 0.01 SOL to count toward the guardrail.
 const MIN_SIZE_LAMPORTS = 10_000_000n;
-// Exits: take profit / stop loss / maximum hold, grouped as one policy
-// so the whole exit behaviour can be audited — and re-graded — together.
-// Values are basis points off the entry print (take-profit / stop-loss)
-// and further trades on the mint (maximum hold). They are the measured
-// v1 values: TP +10% (1000 bps), stop -5% (500 bps), 60 trades.
-// Basis-point arithmetic always divides by BPS_DENOMINATOR (10_000).
+// Exits, grouped as one policy so the whole exit behaviour can be
+// audited — and re-graded — together. The values are basis points away
+// from the entry print (take-profit / stop-loss) and further trades on
+// the mint (maximum hold). They are the measured v1 values: take-profit
+// +10% (1000 bps), stop-loss -5% (500 bps), 60 trades. Basis-point
+// arithmetic always divides by BPS_DENOMINATOR (10_000).
 const BPS_DENOMINATOR = 10_000;
 const EXIT_POLICY = {
   takeProfitBps: 1000,
@@ -63,9 +70,10 @@ interface MintTrack {
   trades: number;
   buyers: Set<string>;
   complete: boolean;
-  // True only once this run has seen the mint's CreateEvent. A mint first
-  // seen through a trade or a mark may already be old: its "first" price
-  // is not its birth price, so it must never qualify as a newborn snipe.
+  // True only once this run has actually seen the mint's CreateEvent.
+  // A mint first noticed through a trade or a mark may already be old:
+  // its "first" price is not its birth price, so it must never qualify
+  // as a newborn snipe.
   created: boolean;
 }
 
@@ -74,7 +82,7 @@ interface EntryRecord {
   entryTrades: number;
 }
 
-// Price of one token in SOL, from the curve's virtual reserves.
+// Price of one token in SOL, read off the curve's virtual reserves.
 function curvePrice(state: BotState, mint: string): number | null {
   const curve = state.curves.get(mint);
   if (curve === undefined) return null;
@@ -83,10 +91,10 @@ function curvePrice(state: BotState, mint: string): number | null {
   return Number(curve.virtual_quote_reserves) / Number(curve.virtual_token_reserves);
 }
 
-// Exit thresholds for one entry print, from EXIT_POLICY. Kept as a
-// helper so the exit loop reads as policy, not arithmetic, while the
-// computation stays byte-for-byte the v1 formula: entry * (10000 +/- bps)
-// / 10000, evaluated in that order.
+// Exit thresholds for one entry print, derived from EXIT_POLICY. Kept
+// as a helper so the exit loop reads as policy rather than arithmetic,
+// while the computation stays byte-for-byte the v1 formula:
+// entry * (10000 +/- bps) / 10000, evaluated in that order.
 function exitThresholds(entryPrice: number): { takeProfit: number; stopLoss: number } {
   return {
     takeProfit:
@@ -111,13 +119,14 @@ function trackFor(mint: string, firstPrice: number): MintTrack {
 
 await runBot({
   onBatch(state: BotState, batch: Batch): OrderInput[] {
-    // Fold this batch's events into per-mint trackers, in chain order.
+    // Fold this batch's events into the per-mint trackers, in chain order.
     for (const event of batch.events) {
       if (event.event === "CreateEvent") {
         const price =
           Number(event.virtual_quote_reserves) / Number(event.virtual_token_reserves);
-        // Birth resets the tracker: trades seen before the create (if any)
-        // belong to a life the bot did not witness from the start.
+        // Birth resets the tracker: any trades seen before the create
+        // (if there were any) belong to a life the bot did not witness
+        // from the start.
         tracks.set(event.mint, {
           firstPrice: price,
           trades: 0,
@@ -137,10 +146,11 @@ await runBot({
       }
     }
 
-    // Record an entry print the first time a position is seen, from the
-    // mark price then. (Polishes 2 and 4 tried the fill quote and the
-    // decision price instead; both graded worse than this on the dev
-    // window. Polish 5 restores the v1 behaviour, which measured best.)
+    // Record an entry print the first time a position is seen, taken
+    // from the mark price at that moment. (Earlier polishes tried the
+    // fill quote and the decision price instead; both graded worse than
+    // this on the dev window. This restores the best-measured v1
+    // behaviour, as documented in BUILD.md.)
     for (const [mint] of state.positions) {
       if (!entries.has(mint)) {
         const price = curvePrice(state, mint);
@@ -163,7 +173,7 @@ await runBot({
     const txFee = state.txFeeLamports();
     let reserved = 0n;
 
-    // Exits first: take profit, stop loss, or stale position.
+    // Exits first: take profit, stop loss, or a stale position.
     for (const [mint, position] of state.positions) {
       if (pendingSells.has(mint)) continue;
       const track = tracks.get(mint);
