@@ -25,4 +25,20 @@ lift; size min(0.30 SOL, 90% of the harness buy cap); exit at +10%
 take-profit, -5% stop, or 60 further trades; one attempt per mint ever;
 max 5 open positions; buy slippage 800 bps, sell slippage 1500 bps.
 
-Measured grade-local result: (to be recorded after the first grade run).
+Measured grade-local result (process driver, Node v24 vs the server's
+Node v26 harness, so result_sha256 will differ on the server): Sharpe
+(hourly) -0.2468, net PnL -0.568 SOL, return -5.68%, max drawdown 0.078,
+win rate 0.334 over 464 round trips / 464 distinct mints, 923 fills,
+38 rejected, 14 failed. Guardrails met. The bot traded far more coins
+(464) than the offline sim's ~283, at a much lower win rate — consistent
+with entering coins first seen mid-life, whose "first print" was not
+their birth price.
+
+## Polish 1 — enter only witnessed births
+
+Rationale: require the mint's CreateEvent to have been seen in this run
+before any entry, resetting the tracker at birth. Mints first observed via
+a trade or mark are never treated as newborns. Nothing else changed, so
+the grade delta isolates this filter.
+
+Measured grade-local result: (to be recorded after the polish-1 grade run).

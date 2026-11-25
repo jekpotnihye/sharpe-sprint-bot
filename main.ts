@@ -44,6 +44,10 @@ interface MintTrack {
   trades: number;
   buyers: Set<string>;
   complete: boolean;
+  // True only once this run has seen the mint's CreateEvent. A mint first
+  // seen through a trade or a mark may already be old: its "first" price
+  // is not its birth price, so it must never qualify as a newborn snipe.
+  created: boolean;
 }
 
 interface EntryRecord {
@@ -67,7 +71,7 @@ const entries = new Map<string, EntryRecord>();
 function trackFor(mint: string, firstPrice: number): MintTrack {
   let track = tracks.get(mint);
   if (track === undefined) {
-    track = { firstPrice, trades: 0, buyers: new Set<string>(), complete: false };
+    track = { firstPrice, trades: 0, buyers: new Set<string>(), complete: false, created: false };
     tracks.set(mint, track);
   }
   return track;
@@ -80,7 +84,15 @@ await runBot({
       if (event.event === "CreateEvent") {
         const price =
           Number(event.virtual_quote_reserves) / Number(event.virtual_token_reserves);
-        trackFor(event.mint, price);
+        // Birth resets the tracker: trades seen before the create (if any)
+        // belong to a life the bot did not witness from the start.
+        tracks.set(event.mint, {
+          firstPrice: price,
+          trades: 0,
+          buyers: new Set<string>(),
+          complete: false,
+          created: true,
+        });
       } else if (event.event === "TradeEvent") {
         const price =
           Number(event.virtual_quote_reserves) / Number(event.virtual_token_reserves);
@@ -146,6 +158,7 @@ await runBot({
         if (state.positions.has(mint)) continue;
         if (pendingBuys.has(mint)) continue;
         if (track.complete) continue;
+        if (!track.created) continue;
         if (track.trades < 1 || track.trades > MAX_ENTRY_TRADES) continue;
         if (track.buyers.size < MIN_BUYERS) continue;
         const price = curvePrice(state, mint);
