@@ -25,20 +25,20 @@ const MIN_BUYERS = 4;
 const MAX_ENTRY_TRADES = 10;
 // Entry: price must be at least this far above its first observed print.
 const ENTRY_LIFT_BPS = 500;
-// Entry: never chase a coin that has already run this far above its first
-// print by decision time — the crossing trade may be stale, and the fill
-// two slots later lands on an extended price.
-const MAX_ENTRY_LIFT_BPS = 2000;
+// (Polish 3's +20% chase cap is dropped in polish 4: it cut round trips
+// from 464 to 152 and made hourly Sharpe worse, because the fewer, smaller
+// trades left hourly returns consistently slightly negative with low
+// variance. The cap is kept out unless a later polish re-earns it.)
 // Position size: at most this much SOL per mint, and at most 90% of the
 // harness buy cap (1% of the mint's real SOL reserve) for safety.
 const MAX_SIZE_LAMPORTS = 300_000_000n;
 // A round trip must be at least 0.01 SOL to count toward the guardrail.
 const MIN_SIZE_LAMPORTS = 10_000_000n;
 // Exits: take profit / stop loss, in basis points off the entry print.
-const TAKE_PROFIT_BPS = 800;
-const STOP_LOSS_BPS = 400;
+const TAKE_PROFIT_BPS = 1000;
+const STOP_LOSS_BPS = 500;
 // Exits: give up after this many further trades on the mint.
-const MAX_HOLD_TRADES = 40;
+const MAX_HOLD_TRADES = 60;
 // Slippage tolerance on fills, in basis points.
 const BUY_SLIPPAGE_BPS = 800;
 const SELL_SLIPPAGE_BPS = 1500;
@@ -71,6 +71,10 @@ function curvePrice(state: BotState, mint: string): number | null {
 const tracks = new Map<string, MintTrack>();
 const attempted = new Set<string>();
 const entries = new Map<string, EntryRecord>();
+// Price (and trade count) seen when each buy was decided, kept so the
+// exit print is the decision price rather than a later mark or the
+// fee-inclusive fill quote.
+const decisionPrints = new Map<string, EntryRecord>();
 
 function trackFor(mint: string, firstPrice: number): MintTrack {
   let track = tracks.get(mint);
@@ -109,17 +113,20 @@ await runBot({
       }
     }
 
-    // Record an entry print the first time a position is seen, from the
-    // mark price then. (Polish 2 tried the fill's own quote/tokens ratio
-    // instead; it graded worse, because the fee- and impact-inclusive
-    // print pulls the stop in and pushes the take-profit out. The mark
-    // print is the price exits are actually measured against.)
+    // Record an entry print the first time a position is seen: prefer
+    // the price at the batch where the buy was decided (the price the
+    // entry signal was based on), falling back to the current mark.
     for (const [mint] of state.positions) {
       if (!entries.has(mint)) {
-        const price = curvePrice(state, mint);
+        const decided = decisionPrints.get(mint);
         const track = tracks.get(mint);
-        if (price !== null) {
-          entries.set(mint, { entryPrice: price, entryTrades: track?.trades ?? 0 });
+        if (decided !== undefined) {
+          entries.set(mint, decided);
+        } else {
+          const price = curvePrice(state, mint);
+          if (price !== null) {
+            entries.set(mint, { entryPrice: price, entryTrades: track?.trades ?? 0 });
+          }
         }
       }
     }
@@ -171,7 +178,6 @@ await runBot({
         const price = curvePrice(state, mint);
         if (price === null) continue;
         if (price * 10_000 < track.firstPrice * (10_000 + ENTRY_LIFT_BPS)) continue;
-        if (price * 10_000 > track.firstPrice * (10_000 + MAX_ENTRY_LIFT_BPS)) continue;
         if (state.committedPositionCount() + orders.filter((o) => o.side === "buy").length >= 5) break;
         const cap = state.maxBuyLamports(mint);
         let size = cap * 9n / 10n;
@@ -180,6 +186,7 @@ await runBot({
         if (state.freeCashLamports() - reserved < size + txFee) continue;
         reserved += size + txFee;
         attempted.add(mint);
+        decisionPrints.set(mint, { entryPrice: price, entryTrades: track.trades });
         orders.push({
           side: "buy",
           mint,

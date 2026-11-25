@@ -71,4 +71,20 @@ sim's flat optimum (TP6/S3/H30 and TP8/S4/H40 both beat TP10/S5/H60
 in the offline sweep, and shorter holds cut exposure to the fade that
 follows most early spikes).
 
-Measured grade-local result: (to be recorded after the polish-3 grade run).
+Measured grade-local result: net PnL improved to -0.176 SOL and max
+drawdown fell to 0.018, but Sharpe (hourly) worsened to -0.995, win rate
+0.237 over only 152 round trips. Lesson: on a Sharpe ranking, fewer
+small losing trades are worse than more volatile ones — the metric needs
+positive mean hourly return, not just a small loss. The chase cap and
+quicker exits are both dropped in polish 4.
+
+## Polish 4 — exit print = decision price, v1 exits restored
+
+Rationale: neither the first-seen mark (v1, stale by the post-fill
+drift) nor the fill quote (polish 2, fee/impact-inclusive) is the price
+the entry signal was based on. Polish 4 stores the curve price at the
+batch where each buy is decided and measures take-profit/stop from it,
+with v1's exits (TP +10% / stop -5% / 60 trades) and no chase cap, so
+the grade delta isolates the entry-print change against v1.
+
+Measured grade-local result: (to be recorded after the polish-4 grade run).
