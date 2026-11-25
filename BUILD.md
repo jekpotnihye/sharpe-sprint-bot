@@ -87,4 +87,18 @@ batch where each buy is decided and measures take-profit/stop from it,
 with v1's exits (TP +10% / stop -5% / 60 trades) and no chase cap, so
 the grade delta isolates the entry-print change against v1.
 
-Measured grade-local result: (to be recorded after the polish-4 grade run).
+Measured grade-local result: Sharpe -0.5941, net PnL -1.128 SOL, win
+rate 0.311 over 533 round trips. Worse than v1 again: the lower
+decision-time print plus the decision-time trade count made hold exits
+fire earlier and turnover rise. The decision print is dropped in polish 5.
+
+## Polish 5 — selection: restore the best-measured configuration
+
+Rationale: four measured variants on the same dev window — v1 (Sharpe
+-0.2468, PnL -0.568 SOL), polish 1 (identical to v1), polish 2 (-0.6445),
+polish 3 (-0.9953), polish 4 (-0.5941). Polish 5 restores v1's
+entry-print behaviour exactly (keeping polish 1's birth filter, which
+changed nothing) and adds the README. If the action log reproduces v1's
+sha256, the selection is verified rather than assumed.
+
+Measured grade-local result: (to be recorded after the polish-5 grade run).
