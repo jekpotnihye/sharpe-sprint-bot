@@ -54,4 +54,21 @@ fill on a fast coin. Polish 2 records the entry print from the buy fill
 itself (quote_lamports / token_amount, fees included) and falls back to
 the mark only when no fill record was seen.
 
-Measured grade-local result: (to be recorded after the polish-2 grade run).
+Measured grade-local result: Sharpe -0.6445, net PnL -1.166 SOL, win
+rate 0.281 over 499 round trips. WORSE than v1 on every metric: the
+fee/impact-inclusive fill print pulls the stop closer and pushes the
+take-profit further away, so exits fire sooner at a loss and later at a
+gain. Reverted in polish 3.
+
+## Polish 3 — revert fill print, cap the chase, exit quicker
+
+Rationale: (1) restore the v1 mark-based entry print; (2) refuse entries
+whose price has already run more than +20% over the first print by
+decision time, since the harness decides per slot-batch and fills two
+slots later, so a stale +5% crossing can fill on a badly extended price;
+(3) quicker exits, TP +8% / stop -4% / 40 trades, the middle of the
+sim's flat optimum (TP6/S3/H30 and TP8/S4/H40 both beat TP10/S5/H60
+in the offline sweep, and shorter holds cut exposure to the fade that
+follows most early spikes).
+
+Measured grade-local result: (to be recorded after the polish-3 grade run).

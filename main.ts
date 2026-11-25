@@ -25,16 +25,20 @@ const MIN_BUYERS = 4;
 const MAX_ENTRY_TRADES = 10;
 // Entry: price must be at least this far above its first observed print.
 const ENTRY_LIFT_BPS = 500;
+// Entry: never chase a coin that has already run this far above its first
+// print by decision time — the crossing trade may be stale, and the fill
+// two slots later lands on an extended price.
+const MAX_ENTRY_LIFT_BPS = 2000;
 // Position size: at most this much SOL per mint, and at most 90% of the
 // harness buy cap (1% of the mint's real SOL reserve) for safety.
 const MAX_SIZE_LAMPORTS = 300_000_000n;
 // A round trip must be at least 0.01 SOL to count toward the guardrail.
 const MIN_SIZE_LAMPORTS = 10_000_000n;
 // Exits: take profit / stop loss, in basis points off the entry print.
-const TAKE_PROFIT_BPS = 1000;
-const STOP_LOSS_BPS = 500;
+const TAKE_PROFIT_BPS = 800;
+const STOP_LOSS_BPS = 400;
 // Exits: give up after this many further trades on the mint.
-const MAX_HOLD_TRADES = 60;
+const MAX_HOLD_TRADES = 40;
 // Slippage tolerance on fills, in basis points.
 const BUY_SLIPPAGE_BPS = 800;
 const SELL_SLIPPAGE_BPS = 1500;
@@ -105,26 +109,11 @@ await runBot({
       }
     }
 
-    // Record the entry print from the bot's own buy fill: quote_lamports is
-    // the SOL actually spent (fees included) and token_amount what arrived,
-    // so their ratio is the true all-in cost per token. Measuring exits
-    // from a later mark price instead would move the take-profit and stop
-    // by whatever the price did between the fill and the next sighting.
-    for (const fill of batch.fills) {
-      if (fill.status !== "filled" || fill.side !== "buy") continue;
-      if (fill.client_id.startsWith("_")) continue;
-      const spent = BigInt(fill.quote_lamports);
-      const tokens = BigInt(fill.token_amount);
-      if (spent === 0n || tokens === 0n) continue;
-      const track = tracks.get(fill.mint);
-      entries.set(fill.mint, {
-        entryPrice: Number(spent) / Number(tokens),
-        entryTrades: track?.trades ?? 0,
-      });
-    }
-
-    // Fallback: a position with no fill record seen gets the current mark
-    // as its entry print, so it still has an exit plan.
+    // Record an entry print the first time a position is seen, from the
+    // mark price then. (Polish 2 tried the fill's own quote/tokens ratio
+    // instead; it graded worse, because the fee- and impact-inclusive
+    // print pulls the stop in and pushes the take-profit out. The mark
+    // print is the price exits are actually measured against.)
     for (const [mint] of state.positions) {
       if (!entries.has(mint)) {
         const price = curvePrice(state, mint);
@@ -182,6 +171,7 @@ await runBot({
         const price = curvePrice(state, mint);
         if (price === null) continue;
         if (price * 10_000 < track.firstPrice * (10_000 + ENTRY_LIFT_BPS)) continue;
+        if (price * 10_000 > track.firstPrice * (10_000 + MAX_ENTRY_LIFT_BPS)) continue;
         if (state.committedPositionCount() + orders.filter((o) => o.side === "buy").length >= 5) break;
         const cap = state.maxBuyLamports(mint);
         let size = cap * 9n / 10n;
