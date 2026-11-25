@@ -41,4 +41,17 @@ before any entry, resetting the tracker at birth. Mints first observed via
 a trade or mark are never treated as newborns. Nothing else changed, so
 the grade delta isolates this filter.
 
-Measured grade-local result: (to be recorded after the polish-1 grade run).
+Measured grade-local result: IDENTICAL to v1 (Sharpe -0.2468, PnL
+-0.568 SOL, same action_log_sha256) — the filter excluded nothing, so every
+entry already had a witnessed birth. Hypothesis rejected; the sim gap is
+elsewhere, most plausibly fill/exit measurement.
+
+## Polish 2 — entry print from the buy fill
+
+Rationale: v1 measured take-profit/stop from the mark price at the first
+batch where the position appeared, which can be several trades after the
+fill on a fast coin. Polish 2 records the entry print from the buy fill
+itself (quote_lamports / token_amount, fees included) and falls back to
+the mark only when no fill record was seen.
+
+Measured grade-local result: (to be recorded after the polish-2 grade run).

@@ -105,8 +105,26 @@ await runBot({
       }
     }
 
-    // Record an entry print the first time a position is seen, so exits are
-    // measured from the price the bot actually first held at.
+    // Record the entry print from the bot's own buy fill: quote_lamports is
+    // the SOL actually spent (fees included) and token_amount what arrived,
+    // so their ratio is the true all-in cost per token. Measuring exits
+    // from a later mark price instead would move the take-profit and stop
+    // by whatever the price did between the fill and the next sighting.
+    for (const fill of batch.fills) {
+      if (fill.status !== "filled" || fill.side !== "buy") continue;
+      if (fill.client_id.startsWith("_")) continue;
+      const spent = BigInt(fill.quote_lamports);
+      const tokens = BigInt(fill.token_amount);
+      if (spent === 0n || tokens === 0n) continue;
+      const track = tracks.get(fill.mint);
+      entries.set(fill.mint, {
+        entryPrice: Number(spent) / Number(tokens),
+        entryTrades: track?.trades ?? 0,
+      });
+    }
+
+    // Fallback: a position with no fill record seen gets the current mark
+    // as its entry print, so it still has an exit plan.
     for (const [mint] of state.positions) {
       if (!entries.has(mint)) {
         const price = curvePrice(state, mint);
