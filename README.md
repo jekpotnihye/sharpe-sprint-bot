@@ -19,6 +19,14 @@ further trades, with at most 5 open positions. See `BUILD.md` for the
 measured results of each polish revision on the dev replay — the dev
 grade is negative, reported honestly there; no profit is claimed.
 
+Guardrails: at most 5 open positions, round trips of at least 0.01 SOL
+on at least 20 distinct mints, max drawdown at most 50%, no shorts, no
+leverage. The bot is fully deterministic — no clock, no randomness, no
+environment reads — so two runs of the same replay produce
+byte-identical action logs. `main.ts` carries a full module header and
+a doc comment on every helper so the whole policy can be audited from
+the entrypoint alone.
+
 ## Layout
 
 - `main.ts` — the strategy entrypoint (Node 22, TypeScript as-is).
