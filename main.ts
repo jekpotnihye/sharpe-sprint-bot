@@ -9,6 +9,16 @@
 // many small steps instead of a few wild swings. Everything is deterministic:
 // no clock, no randomness, no environment reads; the only state is the event
 // stream itself.
+//
+// Guardrails, documented here so the whole policy is auditable in one
+// place (the harness also enforces them): at most 5 open positions at
+// once; a round trip counts only at >= 0.01 SOL per mint; at least 20
+// distinct mints must be round-tripped; maximum drawdown <= 50%; no
+// shorts, no leverage. Exits are governed solely by EXIT_POLICY below:
+// take-profit +10%, stop-loss -5%, and a 60-trade maximum hold. Those
+// three values are the measured v1 values — do not retune them without
+// re-grading, because earlier polishes showed quicker exits worsen
+// hourly Sharpe on the dev window (see BUILD.md).
 
 import {
   runBot,
@@ -32,11 +42,18 @@ const ENTRY_LIFT_BPS = 500;
 const MAX_SIZE_LAMPORTS = 300_000_000n;
 // A round trip must be at least 0.01 SOL to count toward the guardrail.
 const MIN_SIZE_LAMPORTS = 10_000_000n;
-// Exits: take profit / stop loss, in basis points off the entry print.
-const TAKE_PROFIT_BPS = 1000;
-const STOP_LOSS_BPS = 500;
-// Exits: give up after this many further trades on the mint.
-const MAX_HOLD_TRADES = 60;
+// Exits: take profit / stop loss / maximum hold, grouped as one policy
+// so the whole exit behaviour can be audited — and re-graded — together.
+// Values are basis points off the entry print (take-profit / stop-loss)
+// and further trades on the mint (maximum hold). They are the measured
+// v1 values: TP +10% (1000 bps), stop -5% (500 bps), 60 trades.
+// Basis-point arithmetic always divides by BPS_DENOMINATOR (10_000).
+const BPS_DENOMINATOR = 10_000;
+const EXIT_POLICY = {
+  takeProfitBps: 1000,
+  stopLossBps: 500,
+  maxHoldTrades: 60,
+} as const;
 // Slippage tolerance on fills, in basis points.
 const BUY_SLIPPAGE_BPS = 800;
 const SELL_SLIPPAGE_BPS = 1500;
@@ -64,6 +81,19 @@ function curvePrice(state: BotState, mint: string): number | null {
   if (curve.virtual_token_reserves === 0n) return null;
   if (curve.virtual_quote_reserves === 0n) return null;
   return Number(curve.virtual_quote_reserves) / Number(curve.virtual_token_reserves);
+}
+
+// Exit thresholds for one entry print, from EXIT_POLICY. Kept as a
+// helper so the exit loop reads as policy, not arithmetic, while the
+// computation stays byte-for-byte the v1 formula: entry * (10000 +/- bps)
+// / 10000, evaluated in that order.
+function exitThresholds(entryPrice: number): { takeProfit: number; stopLoss: number } {
+  return {
+    takeProfit:
+      (entryPrice * (BPS_DENOMINATOR + EXIT_POLICY.takeProfitBps)) / BPS_DENOMINATOR,
+    stopLoss:
+      (entryPrice * (BPS_DENOMINATOR - EXIT_POLICY.stopLossBps)) / BPS_DENOMINATOR,
+  };
 }
 
 const tracks = new Map<string, MintTrack>();
@@ -142,9 +172,10 @@ await runBot({
       const price = curvePrice(state, mint);
       if (record === undefined || price === null) continue;
       const age = (track?.trades ?? record.entryTrades) - record.entryTrades;
-      const up = price >= (record.entryPrice * (10_000 + TAKE_PROFIT_BPS)) / 10_000;
-      const down = price <= (record.entryPrice * (10_000 - STOP_LOSS_BPS)) / 10_000;
-      if (up || down || age >= MAX_HOLD_TRADES) {
+      const thresholds = exitThresholds(record.entryPrice);
+      const up = price >= thresholds.takeProfit;
+      const down = price <= thresholds.stopLoss;
+      if (up || down || age >= EXIT_POLICY.maxHoldTrades) {
         orders.push({
           side: "sell",
           mint,
@@ -167,7 +198,7 @@ await runBot({
         if (track.buyers.size < MIN_BUYERS) continue;
         const price = curvePrice(state, mint);
         if (price === null) continue;
-        if (price * 10_000 < track.firstPrice * (10_000 + ENTRY_LIFT_BPS)) continue;
+        if (price * BPS_DENOMINATOR < track.firstPrice * (BPS_DENOMINATOR + ENTRY_LIFT_BPS)) continue;
         if (state.committedPositionCount() + orders.filter((o) => o.side === "buy").length >= 5) break;
         const cap = state.maxBuyLamports(mint);
         let size = cap * 9n / 10n;
