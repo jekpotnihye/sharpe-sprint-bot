@@ -101,4 +101,11 @@ entry-print behaviour exactly (keeping polish 1's birth filter, which
 changed nothing) and adds the README. If the action log reproduces v1's
 sha256, the selection is verified rather than assumed.
 
-Measured grade-local result: (to be recorded after the polish-5 grade run).
+Measured grade-local result: Sharpe -0.2468, net PnL -0.568 SOL,
+action_log_sha256 da2937c27d2f69d62e3be48670c0b0de13f84c45b1d09077c8fdcf4b325d5177
+— byte-identical to v1, confirming the selection. Final configuration:
+entry within first 10 trades, >= 4 distinct buyers, >= +5% lift, size
+min(0.30 SOL, 90% of buy cap); exits TP +10% / stop -5% / 60 trades;
+one attempt per mint; max 5 open. Dev grade is negative and the bot is
+NOT prize-eligible on the dev window (net PnL below holding cash); the
+final 6-hour window is a fresh sample and no profit is claimed.
